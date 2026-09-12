@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 from pathlib import Path
+from time import sleep
 
 from app.config import AppConfig, PROJECT_ROOT
 from app.database import Database
@@ -90,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="agenda um Reel real e exige confirmacao de sucesso da Meta",
     )
     parser.add_argument(
+        "--schedule-batch",
+        action="store_true",
+        help="agenda os itens PENDING em sequencia e isola falhas por Reel",
+    )
+    parser.add_argument(
         "--browser-channel",
         choices=("chromium", "chrome", "msedge"),
         default="chromium",
@@ -102,6 +108,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="valida/importa e lista a fila, sem operar a interface do Meta",
     )
     parser.add_argument("--limit", type=positive_integer)
+    parser.add_argument(
+        "--cooldown-every",
+        type=positive_integer,
+        default=None,
+        metavar="N",
+        help="no modo lote, pausa depois de cada N tentativas",
+    )
+    parser.add_argument(
+        "--cooldown-seconds",
+        type=positive_integer,
+        default=900,
+        metavar="SEGUNDOS",
+        help="duracao da pausa periodica do lote (padrao: 900)",
+    )
     parser.add_argument(
         "--manual-confirm",
         action="store_true",
@@ -188,6 +208,17 @@ def main(argv: list[str] | None = None) -> int:
             set_schedule_values=True,
             confirm_schedule=True,
             manual_confirm=args.manual_confirm,
+        )
+
+    if args.schedule_batch:
+        return _run_schedule_batch(
+            config,
+            logger,
+            limit=args.limit,
+            manual_confirm=args.manual_confirm,
+            reprocess_failures=args.reprocess_failures,
+            cooldown_every=args.cooldown_every,
+            cooldown_seconds=args.cooldown_seconds,
         )
 
     browser_only = args.open_browser and not (
@@ -592,16 +623,22 @@ def _run_next_test(
         suite.test_session()
         suite.create_reel()
         suite.select_instagram_account(account["instagram_name"])
+        suite.wait_for_stability()
         suite.upload_video(post.video)
         suite.fill_caption(post.legenda)
+        suite.wait_for_stability()
         suite.wait_copyright_check()
         suite.click_next_once()
+        suite.wait_for_stability()
         if reach_share:
             suite.click_next_to_share()
+            suite.wait_for_stability()
             if open_schedule_form:
                 suite.select_schedule_mode()
+                suite.wait_for_stability()
                 if set_schedule_values:
                     destinations = suite.set_schedule_datetime(post.data, post.hora)
+                    suite.wait_for_stability()
                     if confirm_schedule:
                         if manual_confirm:
                             answer = input(
@@ -616,8 +653,8 @@ def _run_next_test(
                                 )
                                 logger.warning("ID=%s nao confirmado pelo usuario.", post.id)
                                 return 0
-                        submitted = True
                         suite.click_final_schedule()
+                        submitted = True
                         confirmation = suite.verify_scheduled()
                         database.mark_scheduled(post.id)
                         _save_phase_snapshot(
@@ -697,6 +734,95 @@ def _run_next_test(
     finally:
         browser.close()
     return 0
+
+
+def _run_schedule_batch(
+    config: AppConfig,
+    logger: logging.Logger,
+    *,
+    limit: int | None,
+    manual_confirm: bool,
+    reprocess_failures: bool,
+    cooldown_every: int | None,
+    cooldown_seconds: int,
+) -> int:
+    """Processa a fila real isolando falhas e mantendo a trava por ID."""
+    report = load_and_validate(config.csv_path, config.accounts_path)
+    _print_report(report, logger)
+    if not report.is_valid:
+        logger.error("Lote nao iniciado: a validacao encontrou erros.")
+        return 2
+
+    database = Database(config.database_path)
+    database.initialize()
+    inserted, updated = database.import_posts(report.posts)
+    logger.info("Lote importado | novos=%d | atualizados=%d", inserted, updated)
+    if reprocess_failures:
+        count = database.reprocess_failures()
+        logger.info("Falhas devolvidas para PENDING: %d", count)
+
+    pending = database.pending(limit)
+    if not pending:
+        logger.info("Nenhum item PENDING selecionado para o lote.")
+        _print_summary(database, logger)
+        return 0
+
+    total = len(pending)
+    scheduled = 0
+    not_scheduled = 0
+    logger.info("LOTE REAL INICIADO | itens=%d", total)
+    for position, row in enumerate(pending, start=1):
+        post_id = row["id"]
+        logger.info("LOTE %d/%d | iniciando ID=%s", position, total, post_id)
+        result = _run_next_test(
+            config,
+            logger,
+            post_id,
+            reach_share=True,
+            open_schedule_form=True,
+            set_schedule_values=True,
+            confirm_schedule=True,
+            manual_confirm=manual_confirm,
+        )
+        current_status = database.status(post_id)
+        if current_status == "SCHEDULED":
+            scheduled += 1
+        else:
+            not_scheduled += 1
+        logger.info(
+            "LOTE %d/%d | ID=%s | retorno=%d | status=%s",
+            position,
+            total,
+            post_id,
+            result,
+            current_status,
+        )
+        if result == 6:
+            logger.warning(
+                "Lote pausado por login/2FA/CAPTCHA; resolva manualmente antes de continuar."
+            )
+            break
+        if position < total:
+            if cooldown_every and position % cooldown_every == 0:
+                logger.info(
+                    "COOLDOWN | tentativas=%d | aguardando=%d segundos",
+                    position,
+                    cooldown_seconds,
+                )
+                sleep(cooldown_seconds)
+                logger.info("COOLDOWN concluido | retomando lote")
+            else:
+                # Pausa fixa para liberacao completa do perfil entre itens.
+                sleep(2)
+
+    _print_summary(database, logger)
+    logger.info(
+        "LOTE ENCERRADO | selecionados=%d | agendados=%d | nao_agendados=%d",
+        total,
+        scheduled,
+        not_scheduled,
+    )
+    return 0 if scheduled == total else 13
 
 
 def _save_phase_diagnostics(

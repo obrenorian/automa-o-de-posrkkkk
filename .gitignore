@@ -15,6 +15,7 @@ env/
 
 # Dados locais e credenciais de sessao
 browser_profile*/
+incoming/
 accounts.json
 posts.csv
 .env

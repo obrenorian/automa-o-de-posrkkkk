@@ -131,6 +131,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         next_test_mock.assert_called_once()
 
+    @patch("app.main._run_schedule_batch", return_value=0)
+    def test_schedule_batch_routes_to_queue_runner(self, batch_mock) -> None:
+        exit_code = main(
+            [
+                "--schedule-batch",
+                "--limit",
+                "10",
+                "--cooldown-every",
+                "20",
+                "--cooldown-seconds",
+                "900",
+            ]
+        )
+
+        self.assertEqual(exit_code, 0)
+        batch_mock.assert_called_once()
+        self.assertEqual(batch_mock.call_args.kwargs["cooldown_every"], 20)
+        self.assertEqual(batch_mock.call_args.kwargs["cooldown_seconds"], 900)
+
 
 if __name__ == "__main__":
     unittest.main()

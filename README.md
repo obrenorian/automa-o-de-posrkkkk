@@ -193,6 +193,8 @@ confira o Planner manualmente antes de alterar seu estado.
 | `--profile-dir CAMINHO` | Define o perfil persistente do navegador |
 | `--browser-channel chrome` | Executa a automação com o Chrome instalado |
 | `--limit N` | Limita itens exibidos pelo dry-run |
+| `--cooldown-every N` | No modo lote, pausa depois de cada N tentativas |
+| `--cooldown-seconds N` | Duração da pausa periódica; padrão de 900 segundos |
 | `--reprocess-failures` | Devolve itens `FAILED` para `PENDING` |
 | `--manual-confirm` | Exige confirmação antes do envio real |
 

@@ -49,6 +49,10 @@ class MetaBusinessSuite:
             "Nao foi possivel confirmar a sessao pela interface visivel."
         )
 
+    def wait_for_stability(self, delay_ms: int = 750) -> None:
+        """Pequena pausa fixa para a interface React estabilizar entre etapas."""
+        self.page.wait_for_timeout(delay_ms)
+
     def create_reel(self) -> None:
         """Abre e confirma o compositor; nao seleciona conta nem envia video."""
         if "/latest/reels_composer/" in self.page.url and _any_visible(
@@ -329,8 +333,12 @@ class MetaBusinessSuite:
         action = _first_visible(selectors.final_schedule_actions(self.page), 4_000)
         if action is None:
             raise RuntimeError("Botao final 'Programar' nao encontrado.")
-        if not action.is_enabled():
-            raise RuntimeError("Botao final 'Programar' esta desabilitado.")
+        try:
+            expect(action).to_be_enabled(timeout=30_000)
+        except AssertionError as exc:
+            raise RuntimeError(
+                "Botao final 'Programar' permaneceu desabilitado por 30 segundos."
+            ) from exc
         self.logger.info("Enviando agendamento com um unico clique em Programar")
         action.click(timeout=15_000)
 
