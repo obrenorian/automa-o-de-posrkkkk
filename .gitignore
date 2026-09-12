@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Dados locais e credenciais de sessao
+browser_profile*/
+accounts.json
+posts.csv
+.env
+.env.*
+!.env.example
+
+# Estado e diagnosticos de execucao
+scheduler.db
+scheduler.db-*
+logs/
+screenshots/
+playwright-report/
+test-results/
+
+# Midia nao deve entrar no repositorio
+*.mp4
+*.mov
+*.m4v
+
+# IDE e sistema operacional
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
